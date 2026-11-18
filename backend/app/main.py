@@ -80,8 +80,27 @@ _three_up = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path
 # Prefer Docker path (/app/frontend/dist); fall back to local path
 frontend_dist_path = _two_up if os.path.exists(_two_up) else _three_up
 
+
+class FrontendStaticFiles(StaticFiles):
+    """Serve the built frontend with cache headers that let new deploys show up immediately.
+
+    Without an explicit Cache-Control, browsers heuristically cache index.html
+    (for days if it hadn't changed in months) and keep loading the old JS bundle.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200 and path.startswith("assets/"):
+            # Vite fingerprints these filenames, so their contents never change.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            # index.html and other unhashed files: revalidate every load (cheap 304 via ETag).
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if os.path.exists(frontend_dist_path):
-    app.mount("/", StaticFiles(directory=frontend_dist_path, html=True), name="frontend")
+    app.mount("/", FrontendStaticFiles(directory=frontend_dist_path, html=True), name="frontend")
 else:
     @app.get("/")
     def read_root():
